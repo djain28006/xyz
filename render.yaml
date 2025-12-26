@@ -13,11 +13,12 @@ services:
         value: 3.11.0
 
   # Frontend Static Site
-  - type: static
+  - type: web
+    runtime: static
     name: fingenius-frontend
     rootDir: frontend
     buildCommand: npm install && npm run build
-    publishDir: dist
+    staticPublishPath: dist
     envVars:
       - key: VITE_BACKEND_URL
         fromService:
