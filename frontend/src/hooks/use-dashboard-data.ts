@@ -1,26 +1,28 @@
 import { useState, useEffect } from "react";
+import { auth, db } from "@/lib/firebase";
+import { doc, getDoc, collection, query, where, getDocs, orderBy, Timestamp } from "firebase/firestore";
 
-const API_BASE = "http://127.0.0.1:8000";
+// Use environment variable for backend URL
+const API_BASE = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 
 export function useDashboardData(fileId?: string) {
-  const [summary, setSummary] = useState(null);
-  const [expenses, setExpenses] = useState(null);
+  const [summary, setSummary] = useState<any>(null);
+  const [expenses, setExpenses] = useState<any>(null); // Use any for now or define interface
+  // ... existing state ...
   const [investments, setInvestments] = useState(null);
   const [goals, setGoals] = useState(null);
   const [history, setHistory] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
-        
-        // Add file_id as query param if provided
-        const queryParam = fileId ? `?file_id=${fileId}` : "";
-        
+
+        // ... existing Promise.all logic for API calls ...
         // Fetch with timeout
         const fetchWithTimeout = (url: string, timeout = 10000) => {
           return Promise.race([
@@ -30,70 +32,146 @@ export function useDashboardData(fileId?: string) {
             )
           ]);
         };
-        
-        // Fetch all endpoints but don't fail if some are slow
+
         const results = await Promise.allSettled([
-          fetchWithTimeout(`${API_BASE}/dashboard/summary${queryParam}`),
-          fetchWithTimeout(`${API_BASE}/dashboard/expenses${queryParam}`),
-          fetchWithTimeout(`${API_BASE}/dashboard/investments${queryParam}`),
-          fetchWithTimeout(`${API_BASE}/dashboard/goals${queryParam}`),
-          fetchWithTimeout(`${API_BASE}/dashboard/history${queryParam}`),
-          fetchWithTimeout(`${API_BASE}/dashboard/analytics${queryParam}`, 15000), // Analytics can take longer
+          fetchWithTimeout(`${API_BASE}/dashboard/summary${fileId ? `?file_id=${fileId}` : ""}`),
+          fetchWithTimeout(`${API_BASE}/dashboard/expenses${fileId ? `?file_id=${fileId}` : ""}`),
+          fetchWithTimeout(`${API_BASE}/dashboard/investments${fileId ? `?file_id=${fileId}` : ""}`),
+          fetchWithTimeout(`${API_BASE}/dashboard/goals${fileId ? `?file_id=${fileId}` : ""}`),
+          fetchWithTimeout(`${API_BASE}/dashboard/history${fileId ? `?file_id=${fileId}` : ""}`),
+          fetchWithTimeout(`${API_BASE}/dashboard/analytics${fileId ? `?file_id=${fileId}` : ""}`, 15000),
         ]);
 
-        // Process results safely (cast settled values to Response)
-        const toResponse = (r: any): Response | null => {
-          if (!r) return null;
-          return r as Response;
-        };
-
-        const handleIndex = async (i: number, setter: (v: any) => void) => {
-          const item = results[i];
-          if (item && (item as PromiseFulfilledResult<any>).status === 'fulfilled') {
-            const raw = (item as PromiseFulfilledResult<any>).value;
-            const res = toResponse(raw);
-            if (res && res.ok) {
-              try {
-                const js = await res.json();
-                setter(js);
-              } catch (e) {
-                console.warn(`Failed to parse JSON for endpoint ${i}`, e);
-              }
+        const processResult = async (result: PromiseSettledResult<any>) => {
+          if (result.status === 'fulfilled' && result.value.ok) {
+            try {
+              return await result.value.json();
+            } catch (e) {
+              console.warn("JSON parse error", e);
+              return null;
             }
           }
+          return null;
         };
 
-        await Promise.all([
-          handleIndex(0, setSummary),
-          handleIndex(1, setExpenses),
-          handleIndex(2, setInvestments),
-          handleIndex(3, setGoals),
-          handleIndex(4, setHistory),
-          handleIndex(5, setAnalytics),
-        ]);
+        const [
+          summaryData,
+          expensesData,
+          investmentsData,
+          goalsData,
+          historyData,
+          analyticsData
+        ] = await Promise.all(results.map(processResult));
 
-        // Check if at least summary loaded
-        if (results[0].status === "rejected") {
-          throw new Error("Failed to fetch dashboard summary");
-        }
-      } catch (err) {
-        const raw = err?.message || String(err);
-        console.error("Error fetching dashboard data:", raw);
 
-        if (raw.includes("API key not valid") || raw.includes("API_KEY_INVALID")) {
-          setError(
-            "AI service not available: invalid or missing Gemini API key. Add a valid GEMINI_API_KEY to backend/.env and restart the server."
-          );
-        } else {
-          setError(raw);
+        // FETCH REAL DATA FROM FIRESTORE
+        let userSalary = 0;
+        let monthlyExpenseTotal = 0;
+        let realExpensesList: any[] = [];
+
+        // Structures for aggregation
+        const categoryMap: Record<string, number> = {};
+        const monthMap: Record<string, number> = {};
+
+        const user = auth.currentUser;
+
+        if (user) {
+          try {
+            // 1. Fetch Salary
+            const userRef = doc(db, "users", user.uid);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+              userSalary = userSnap.data().monthly_income || 0;
+            }
+
+            // 2. Fetch ALL Expenses (for History & Categories)
+            const expensesRef = collection(db, "users", user.uid, "expenses");
+            const q = query(expensesRef, orderBy("date", "desc"));
+            const expensesSnap = await getDocs(q);
+
+            const today = new Date();
+            const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`; // YYYY-MM
+
+            expensesSnap.forEach(doc => {
+              const d = doc.data();
+              const amt = Number(d.amount) || 0;
+              const dateStr = d.date; // YYYY-MM-DD
+
+              // Current Month Calculation
+              if (dateStr && dateStr.startsWith(currentMonthKey)) {
+                monthlyExpenseTotal += amt;
+                realExpensesList.push({ id: doc.id, ...d });
+              }
+
+              // Category Aggregation
+              if (d.category) {
+                categoryMap[d.category] = (categoryMap[d.category] || 0) + amt;
+              }
+
+              // History Aggregation (Month Name)
+              if (dateStr) {
+                const dateObj = new Date(dateStr);
+                const monthName = dateObj.toLocaleString('default', { month: 'short' });
+                monthMap[monthName] = (monthMap[monthName] || 0) + amt;
+              }
+            });
+
+          } catch (err) {
+            console.error("Error fetching Firestore data", err);
+          }
         }
+
+        // Build History Array for Chart (Sort by Month order)
+        const monthsOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const realHistoryList = Object.entries(monthMap).map(([month, expense]) => ({
+          month,
+          expense
+        })).sort((a, b) => monthsOrder.indexOf(a.month) - monthsOrder.indexOf(b.month));
+
+        // Merge Firestore data into summary
+        const finalSummary = summaryData ? {
+          ...summaryData,
+          profile: {
+            ...summaryData.profile,
+            monthly_income: userSalary > 0 ? userSalary : (summaryData.profile?.monthly_income || 0)
+          },
+          summary: {
+            ...summaryData.summary,
+            expenses: Object.keys(categoryMap).length > 0 ? categoryMap : summaryData?.summary?.expenses
+          },
+          total_expenses: monthlyExpenseTotal
+        } : {
+          profile: { monthly_income: userSalary },
+          total_expenses: monthlyExpenseTotal,
+          summary: { expenses: categoryMap }
+        };
+
+        // Merge real expenses into expensesData
+        const finalExpenses = expensesData ? {
+          ...expensesData,
+          expenses: realExpensesList.length > 0 ? realExpensesList : expensesData.expenses
+        } : { expenses: realExpensesList };
+
+        // Override history with real data
+        const finalHistory = realHistoryList.length > 0 ? { history: realHistoryList } : historyData;
+
+        setSummary(finalSummary);
+        setExpenses(finalExpenses);
+        setInvestments(investmentsData);
+        setGoals(goalsData);
+        setHistory(finalHistory);
+        setAnalytics(analyticsData);
+
+      } catch (err: any) {
+        console.error("Error fetching dashboard data:", err);
+        setError(err.message || "Failed to fetch data");
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
-  }, [fileId]);
+  }, [fileId]); // Re-run when fileId changes
 
   return {
     summary,

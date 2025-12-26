@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
-import { TrendingUp, Clock, Shield, Info, Plus } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { TrendingUp, Clock, Shield, Info, Plus, Sparkles } from "lucide-react";
 import { RiskBadge, RiskLevel } from "@/components/ui/risk-badge";
 import { Button } from "@/components/ui/button";
+import { useDashboardData } from "@/hooks/use-dashboard-data";
 
 interface Investment {
   id: number;
@@ -17,7 +18,21 @@ interface Investment {
 
 export default function Investments() {
   const [investments, setInvestments] = useState<Investment[]>([]);
+  const { summary, loading: dataLoading } = useDashboardData();
   const [loading, setLoading] = useState(true);
+
+  // Derived financial data
+  const { income, expenses, investableSurplus, savingsRate } = useMemo(() => {
+    const inc = summary?.profile?.monthly_income || 0;
+    const exp = summary?.total_expenses || 0;
+    const surplus = Math.max(0, inc - exp);
+    return {
+      income: inc,
+      expenses: exp,
+      investableSurplus: surplus,
+      savingsRate: inc > 0 ? (surplus / inc) * 100 : 0
+    };
+  }, [summary]);
 
   useEffect(() => {
     fetch("http://localhost:8000/dashboard/investments")
@@ -33,14 +48,40 @@ export default function Investments() {
         setLoading(false);
       });
   }, []);
+
+  if (dataLoading || loading) return <div className="p-8 text-center text-muted-foreground">Analysing your financial profile...</div>;
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-foreground">Investment Recommendations</h1>
         <p className="text-muted-foreground">
-          AI-curated investment options based on your risk profile
+          AI-curated investment options based on your real financial capacity
         </p>
+      </div>
+
+      {/* AI Investment Insight */}
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 animate-in fade-in slide-in-from-top-2">
+        <div className="flex items-start gap-4">
+          <div className="rounded-full bg-primary/10 p-2 text-primary shrink-0">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-foreground flex items-center gap-2">
+              AI Investment Analysis
+            </h3>
+            <p className="text-sm text-foreground/80 mt-1">
+              Based on your monthly income of <span className="font-semibold">₹{income.toLocaleString()}</span> and expenses of <span className="font-semibold">₹{expenses.toLocaleString()}</span>,
+              you have a potential investable surplus of <span className="font-bold text-emerald-500">₹{investableSurplus.toLocaleString()}</span>.
+            </p>
+            <p className="text-sm text-muted-foreground mt-2">
+              {savingsRate > 20
+                ? "🚀 You have a healthy savings rate (" + savingsRate.toFixed(0) + "%). exact match for aggressive wealth creation."
+                : "🛡️ Your surplus is limited. Focus on building an emergency fund (Liquid Funds) before high-risk equities."}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Risk Profile Card */}
@@ -51,41 +92,45 @@ export default function Investments() {
               <Shield className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <h3 className="font-semibold text-foreground">Your Risk Profile</h3>
+              <h3 className="font-semibold text-foreground">Recommended Profile</h3>
               <p className="text-sm text-muted-foreground">
-                Based on your age, income, and goals
+                Tailored to your current surplus of ₹{investableSurplus.toLocaleString()}
               </p>
             </div>
           </div>
-          <RiskBadge level="medium" />
+          <RiskBadge level={investableSurplus > 20000 ? "high" : investableSurplus > 5000 ? "medium" : "low"} />
         </div>
         <div className="mt-4 p-4 rounded-lg bg-muted/50">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Portfolio Allocation</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Suggested Allocation</span>
             <div className="flex items-center gap-3 text-xs font-medium">
-              <span className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-primary" /> Equity: 60%</span>
-              <span className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-muted-foreground/40" /> Debt: 40%</span>
+              <span className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-primary" /> Equity: {investableSurplus > 20000 ? "70" : "50"}%</span>
+              <span className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-muted-foreground/40" /> Debt: {investableSurplus > 20000 ? "30" : "50"}%</span>
             </div>
           </div>
           <div className="h-1.5 w-full flex rounded-full overflow-hidden bg-muted-foreground/10 mb-4">
-            <div className="h-full bg-primary" style={{ width: "60%" }} />
-            <div className="h-full bg-muted-foreground/30" style={{ width: "40%" }} />
+            <div className="h-full bg-primary" style={{ width: investableSurplus > 20000 ? "70%" : "50%" }} />
+            <div className="h-full bg-muted-foreground/30" style={{ width: investableSurplus > 20000 ? "30%" : "50%" }} />
           </div>
           <p className="text-sm text-muted-foreground">
             <Info className="inline-block h-4 w-4 mr-1 -mt-0.5" />
-            A moderate risk profile suggests a balanced portfolio with 60% equity and 40%
-            debt instruments for optimal growth with managed volatility.
+            {investableSurplus > 20000
+              ? "Your high surplus allows for aggressive equity exposure to maximize long-term wealth."
+              : "With a balanced surplus, a mix of stable debt and growth equity is recommended."}
           </p>
         </div>
       </div>
 
       {/* Top Pick for You */}
-      <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex items-center gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <TrendingUp className="h-4 w-4" />
         </div>
         <p className="text-sm text-foreground">
-          <span className="font-semibold text-primary">⭐ Top Pick:</span> <span className="font-medium">Nifty 50 Index Fund</span> — ideal for medium risk, long-term growth.
+          <span className="font-semibold text-primary">⭐ Top Pick:</span>
+          {investableSurplus > 20000
+            ? " Small Cap Funds — High risk but highest potential returns for your surplus size."
+            : " Nifty 50 Index Fund — ideal for steady, low-cost wealth creation."}
         </p>
       </div>
 
@@ -133,7 +178,7 @@ export default function Investments() {
       </div>
       <p className="text-[11px] text-muted-foreground/60 italic flex items-center gap-1.5 px-1 -mt-2">
         <span>🤖</span>
-        Based on your medium-risk profile and 5+ year goals, Mutual Funds provide the most balanced risk–return tradeoff.
+        AI Suggestion: Allocating 20% of your ₹{investableSurplus.toLocaleString()} surplus (approx ₹{(investableSurplus * 0.2).toLocaleString()}) to SIPs is a safe start.
       </p>
 
       {/* Risk vs Return Visual */}

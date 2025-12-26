@@ -42,9 +42,17 @@ export default function Login() {
           photoURL: user.photoURL,
           createdAt: serverTimestamp(),
         });
-      }
+        navigate("/onboarding");
+      } else {
+        // Check if profile has monthly income
+        const userData = userSnap.data();
 
-      navigate("/dashboard");
+        if (userData && userData.monthly_income) {
+          navigate("/dashboard");
+        } else {
+          navigate("/onboarding");
+        }
+      }
     } catch (err: any) {
       console.error("Google Sign-In Error:", err);
       // Provide more specific error messages if available

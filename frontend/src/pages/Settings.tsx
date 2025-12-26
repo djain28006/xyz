@@ -1,8 +1,14 @@
-import { User, Bell, Shield, CreditCard, HelpCircle, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { User, Bell, Shield, CreditCard, HelpCircle, ChevronRight, Save, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { toast } from "sonner";
 
 const settingsGroups = [
   {
@@ -29,6 +35,52 @@ const settingsGroups = [
 
 export default function Settings() {
   const { user } = useAuth();
+  const [income, setIncome] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchIncome = async () => {
+      if (!user) return;
+      try {
+        const docRef = doc(db, "users", user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setIncome(docSnap.data().monthly_income?.toString() || "");
+        }
+      } catch (error) {
+        console.error("Error fetching income:", error);
+      } finally {
+        setInitialLoading(false);
+      }
+    };
+    fetchIncome();
+  }, [user]);
+
+  const handleSaveIncome = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const amount = parseFloat(income);
+      if (isNaN(amount) || amount < 0) {
+        toast.error("Please enter a valid amount");
+        return;
+      }
+
+      const docRef = doc(db, "users", user.uid);
+      await updateDoc(docRef, {
+        monthly_income: amount,
+        updatedAt: new Date().toISOString()
+      });
+      toast.success("Income updated successfully");
+    } catch (error) {
+      console.error("Error updating income:", error);
+      toast.error("Failed to update income");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Header */}
@@ -41,7 +93,7 @@ export default function Settings() {
 
       {/* Profile Card */}
       <div className="rounded-xl bg-card p-6 shadow-card border border-border/50">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 mb-6">
           <Avatar className="h-16 w-16">
             <AvatarImage src={user?.photoURL || undefined} alt={user?.displayName || "User"} />
             <AvatarFallback className="bg-primary/10 text-primary">
@@ -52,9 +104,23 @@ export default function Settings() {
             <h3 className="text-lg font-semibold">{user?.displayName || "User"}</h3>
             <p className="text-sm text-muted-foreground">{user?.email || "No email"}</p>
           </div>
-          <Button variant="outline" size="sm">
-            Edit Profile
-          </Button>
+        </div>
+
+        <div className="grid gap-2 max-w-xs">
+          <Label htmlFor="income">Monthly Income</Label>
+          <div className="flex gap-2">
+            <Input
+              id="income"
+              type="number"
+              placeholder="50000"
+              value={income}
+              onChange={(e) => setIncome(e.target.value)}
+            />
+            <Button onClick={handleSaveIncome} disabled={loading || initialLoading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Update your monthly income to recalculate budgets.</p>
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AlertCircle, Calendar, IndianRupee, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Calendar, IndianRupee, Plus, Trash2, XCircle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { db } from "@/lib/firebase";
-import { collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Subscription {
@@ -43,6 +43,7 @@ export default function Subscriptions() {
   const [isOpen, setIsOpen] = useState(false);
   const [newSub, setNewSub] = useState({ name: "", cost: "", nextRenewal: "" });
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [cancelId, setCancelId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchSubscriptions = async () => {
@@ -122,6 +123,23 @@ export default function Subscriptions() {
       console.error("Error deleting subscription:", error);
     }
   };
+
+  const handleCancelClick = (id: string) => {
+    setCancelId(id);
+  };
+
+  const confirmCancel = async () => {
+    if (!user || !cancelId) return;
+
+    try {
+      await updateDoc(doc(db, "users", user.uid, "subscriptions", cancelId), { isActive: false });
+      setSubscriptions(subscriptions.map((s) => s.id === cancelId ? { ...s, isActive: false } : s));
+      setCancelId(null);
+    } catch (error) {
+      console.error("Error cancelling subscription:", error);
+    }
+  };
+
 
   const totalMonthly = subscriptions
     .filter((s) => s.isActive)
@@ -261,14 +279,29 @@ export default function Subscriptions() {
       </div>
 
       {/* AI Recommendation */}
-      {potentialSavings > 0 && (
-        <div className="rounded-xl bg-success-soft border border-success/20 p-4">
-          <p className="text-sm text-success">
-            💡 <strong>AI Insight:</strong> You could save ₹{potentialSavings.toLocaleString()}/month
-            by cancelling {subscriptions.filter((s) => s.recommendation === "cancel").length} unused or rarely-used subscriptions.
-          </p>
+      <div className="rounded-xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-1 border border-primary/10 animate-in fade-in slide-in-from-top-2">
+        <div className="rounded-lg bg-card/60 backdrop-blur-sm p-3 flex items-center gap-3">
+          <div className="rounded-full bg-primary/10 p-1.5 text-primary shrink-0">
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-semibold text-primary">AI Insight:</span> You are pacing to spend <span className="font-medium text-foreground">₹{(totalMonthly * 12).toLocaleString()}</span> this year on subscriptions.
+            </p>
+            {potentialSavings > 0 ? (
+              <p className="text-xs text-muted-foreground/60 italic">
+                Cancelling the <span className="font-medium text-foreground">{subscriptions.filter(s => s.recommendation === 'cancel').length} flagged items</span> would instantly save you <span className="text-success font-medium">₹{(potentialSavings * 12).toLocaleString()}</span> annually.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground/60 italic">
+                {subscriptions.length > 0
+                  ? `Your most expensive subscription is ${subscriptions.sort((a, b) => b.cost - a.cost)[0]?.name} (₹${subscriptions.sort((a, b) => b.cost - a.cost)[0]?.cost}/mo). Ensure you use it enough to justify the cost.`
+                  : "No active subscriptions found. Great job keeping recurring costs to zero!"}
+              </p>
+            )}
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Subscription Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -285,74 +318,93 @@ export default function Subscriptions() {
             };
             return getPriority(a) - getPriority(b);
           })
-          .map((sub, index) => (
-            <div
-              key={sub.id}
-              className={cn(
-                "rounded-xl bg-card p-5 shadow-card border transition-all animate-fade-in group hover:scale-[1.01]",
-                !sub.isActive
-                  ? "border-muted opacity-50 grayscale"
-                  : sub.recommendation === "cancel"
-                    ? "border-warning/60 bg-warning/[0.02] shadow-sm shadow-warning/5"
-                    : Math.ceil(
-                      (new Date(sub.nextRenewal).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
-                    ) <= 7
-                      ? "border-primary/40 shadow-sm"
-                      : "border-border/30 opacity-80"
-              )}
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-3xl">{sub.logo}</span>
-                  <div>
-                    <h3 className="font-semibold text-foreground">{sub.name}</h3>
-                    <p className="text-xs text-muted-foreground">{sub.category}</p>
-                  </div>
-                </div>
-                <div className="text-right flex items-center gap-4">
-                  <div>
-                    <p className="font-semibold">₹{sub.cost}</p>
-                    <p className="text-xs text-muted-foreground">/month</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                    onClick={(e) => handleDeleteClick(sub.id, e)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+          .map((sub, index) => {
+            const daysUntil = Math.ceil(
+              (new Date(sub.nextRenewal).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+            );
 
-              <div className="mt-4 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Calendar className="h-4 w-4" />
-                  <span>
-                    Renews{" "}
-                    {new Date(sub.nextRenewal).toLocaleDateString("en-IN", {
-                      day: "numeric",
-                      month: "short",
-                    })}
-                  </span>
-                </div>
-                {!sub.isActive && <span className="text-xs font-medium text-muted-foreground">Inactive</span>}
-              </div>
-
-              {sub.recommendation === "cancel" && sub.isActive && (
-                <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-warning-soft px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-warning" />
-                    <span className="text-xs font-medium text-warning">Consider cancelling</span>
+            return (
+              <div
+                key={sub.id}
+                className={cn(
+                  "rounded-xl bg-card p-5 shadow-card border transition-all animate-fade-in group hover:scale-[1.01] relative flex flex-col",
+                  !sub.isActive
+                    ? "border-muted opacity-50 grayscale"
+                    : sub.recommendation === "cancel"
+                      ? "border-warning/60 bg-warning/[0.02] shadow-sm shadow-warning/5"
+                      : daysUntil <= 7
+                        ? "border-primary/40 shadow-sm"
+                        : "border-border/30 opacity-80"
+                )}
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl">{sub.logo}</span>
+                    <div>
+                      <h3 className="font-semibold text-foreground">{sub.name}</h3>
+                      <p className="text-xs text-muted-foreground">{sub.category}</p>
+                    </div>
                   </div>
-                  <span className="text-[10px] font-bold text-success-foreground bg-success/10 px-1.5 py-0.5 rounded">
-                    💰 Saves ₹{sub.cost}/mo
-                  </span>
+                  <div className="text-right flex items-center gap-4">
+                    <div>
+                      <p className="font-semibold">₹{sub.cost}</p>
+                      <p className="text-xs text-muted-foreground">/month</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                      onClick={(e) => handleDeleteClick(sub.id, e)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-              )}
-            </div>
-          ))}
+
+                <div className="mt-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Calendar className="h-4 w-4" />
+                    <span>
+                      Renews{" "}
+                      {new Date(sub.nextRenewal).toLocaleDateString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                      })}
+                    </span>
+                  </div>
+                  {!sub.isActive && <span className="text-xs font-medium text-muted-foreground">Inactive</span>}
+                </div>
+
+                {sub.recommendation === "cancel" && sub.isActive && (
+                  <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-warning-soft px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 text-warning" />
+                      <span className="text-xs font-medium text-warning">Consider cancelling</span>
+                    </div>
+                    <span className="text-[10px] font-bold text-success-foreground bg-success/10 px-1.5 py-0.5 rounded">
+                      💰 Saves ₹{sub.cost}/mo
+                    </span>
+                  </div>
+                )}
+
+                {/* Cancel Subscription Button - Only for 'Cancel' recommendation or Critical Renewals */}
+                {sub.isActive && (sub.recommendation === "cancel" || daysUntil <= 7) && (
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="text-xs h-8"
+                      onClick={() => handleCancelClick(sub.id)}
+                    >
+                      <XCircle className="h-3 w-3 mr-1.5" />
+                      {daysUntil <= 7 ? "Cancel Before Renewal" : "Cancel Subscription"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
       </div>
 
       <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
@@ -367,6 +419,24 @@ export default function Subscriptions() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90">
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cancel Confirmation Dialog */}
+      <AlertDialog open={!!cancelId} onOpenChange={(open) => !open && setCancelId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Subscription?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark the subscription as inactive. You can always reactivate it later or delete it permanently.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Go Back</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCancel} className="bg-destructive hover:bg-destructive/90">
+              Confirm Cancel
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

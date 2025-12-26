@@ -216,21 +216,54 @@ export default function Goals() {
       </div>
 
       {/* AI Recommendation */}
-      <div className="rounded-xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-1 border border-primary/10">
-        <div className="rounded-lg bg-card/60 backdrop-blur-sm p-3 flex items-center gap-3">
-          <div className="rounded-full bg-primary/10 p-1.5 text-primary shrink-0">
-            <Sparkles className="h-4 w-4" />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <p className="text-sm text-muted-foreground">
-              <span className="font-semibold text-primary">AI Recommendation:</span> Increasing your monthly contribution to <span className="font-medium text-foreground">Wedding Fund</span> by <span className="font-medium text-foreground">₹3,500</span> would put you back on track for the target date.
-            </p>
-            <p className="text-xs text-muted-foreground/60 italic">
-              If unchanged, this goal may be delayed by 4 months.
-            </p>
+      {goals.length > 0 && (
+        <div className="rounded-xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-1 border border-primary/10">
+          <div className="rounded-lg bg-card/60 backdrop-blur-sm p-3 flex items-center gap-3">
+            <div className="rounded-full bg-primary/10 p-1.5 text-primary shrink-0">
+              <Sparkles className="h-4 w-4" />
+            </div>
+            {(() => {
+              // Find the most urgent goal (Behind > At Risk > On Track)
+              const sortedGoals = [...goals].sort((a, b) => {
+                const statusA = getStatus(a.saved, a.target, a.deadline, a.createdAt).label;
+                const statusB = getStatus(b.saved, b.target, b.deadline, b.createdAt).label;
+                const priorities = { "Behind": 3, "At Risk": 2, "On Track": 1 };
+                // @ts-ignore
+                if (priorities[statusA] !== priorities[statusB]) return priorities[statusB] - priorities[statusA];
+                return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+              });
+
+              const focusGoal = sortedGoals[0];
+              const status = getStatus(focusGoal.saved, focusGoal.target, focusGoal.deadline, focusGoal.createdAt);
+              const monthlyRequired = getMonthlyRequired(focusGoal.target, focusGoal.saved, focusGoal.deadline);
+
+              if (status.label === "On Track") {
+                return (
+                  <div className="flex flex-col gap-0.5">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-semibold text-primary">AI Recommendation:</span> You are doing great! All your goals are on track. <span className="font-medium text-foreground">Keep up the momentum!</span>
+                    </p>
+                    <p className="text-xs text-muted-foreground/60 italic">
+                      Consider adding a new goal or increasing your target if you have surplus savings.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="flex flex-col gap-0.5">
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-semibold text-primary">AI Recommendation:</span> To get <span className="font-medium text-foreground">{focusGoal.name}</span> back on track, try to contribute <span className="font-medium text-foreground">₹{monthlyRequired.toLocaleString()}</span> this month.
+                  </p>
+                  <p className="text-xs text-muted-foreground/60 italic">
+                    Currently performing "{status.label}" schedule. Small increases now prevent large gaps later.
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         </div>
-      </div>
+      )}
 
       {/* Priority Goal Highlight */}
       {(() => {

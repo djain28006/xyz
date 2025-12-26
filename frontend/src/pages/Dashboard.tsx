@@ -6,6 +6,11 @@ import {
   PiggyBank,
   Shield,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Bot,
+  ArrowRight,
+  Target,
 } from "lucide-react";
 import { StatCard } from "@/components/ui/stat-card";
 import { ProgressRing } from "@/components/ui/progress-ring";
@@ -54,100 +59,63 @@ function LazyRender({ children, height }: { children: React.ReactNode; height: n
   return <div ref={ref} style={{ height }}>{isVisible ? children : null}</div>;
 }
 
+import { useDashboardData } from "@/hooks/use-dashboard-data";
+
+// ... inside component ...
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const [isAiExpanded, setIsAiExpanded] = useState(false);
 
-  // Real Data State
-  const [realIncome, setRealIncome] = useState(0);
-  const [realExpenses, setRealExpenses] = useState(0);
-  const [realInvestment, setRealInvestment] = useState(0);
-  const [categoryStats, setCategoryStats] = useState<any[]>([]);
-  const [expenseHistory, setExpenseHistory] = useState<any[]>([]);
+  // Use the hook instead of local fetching
+  const { summary, expenses, history, loading: dataLoading } = useDashboardData();
+  const loading = dataLoading;
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!user) return;
+  // Real Data State (Derived from Hook Data)
+  const realIncome = useMemo(() => {
+    return summary?.profile?.monthly_income || 50000; // Fallback to 50k if not set
+  }, [summary]);
 
-      try {
-        setLoading(true);
-        // Fetch Expenses
-        const expensesRef = collection(db, "users", user.uid, "expenses");
-        // Use query to order by date for history
-        const q = query(expensesRef, orderBy("date", "asc"));
-        const expensesSnap = await getDocs(q);
+  const realExpenses = useMemo(() => {
+    // If we have detailed expenses from hook
+    if (expenses?.expenses) {
+      return expenses.expenses.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
+    }
+    // Fallback to summary totals
+    return summary?.total_expenses || 0;
+  }, [expenses, summary]);
 
-        let totalExp = 0;
-        const catTotals: Record<string, number> = {};
-        const historyMap: Record<string, number> = {};
+  const realInvestment = useMemo(() => {
+    return summary?.total_investment || 0;
+  }, [summary]);
 
-        expensesSnap.forEach(doc => {
-          const data = doc.data();
-          const amt = Number(data.amount) || 0;
-          const cat = data.category || "other";
-          const date = data.date; // YYYY-MM-DD
+  const categoryStats = useMemo(() => {
+    if (!summary?.summary?.expenses) return [];
 
-          // Total
-          totalExp += amt;
+    // Convert object { category: amount } to array for chart
+    const colors = [
+      "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)", "hsl(199, 89%, 48%)",
+      "hsl(220, 9%, 46%)", "hsl(280, 65%, 60%)", "hsl(234, 89%, 54%)"
+    ];
 
-          // Category Breakdown
-          catTotals[cat] = (catTotals[cat] || 0) + amt;
+    return Object.entries(summary.summary.expenses).map(([name, value], idx) => ({
+      name,
+      value: Number(value),
+      color: colors[idx % colors.length]
+    })).sort((a, b) => b.value - a.value);
+  }, [summary]);
 
-          // History (Group by Month)
-          // Assuming date is ISO string or YYYY-MM-DD
-          try {
-            const d = new Date(date);
-            const monthKey = d.toLocaleString('en-US', { month: 'short' }); // e.g., "Jan"
-            historyMap[monthKey] = (historyMap[monthKey] || 0) + amt;
-          } catch (e) { }
-        });
+  const expenseHistory = useMemo(() => {
+    if (!history?.history) return [];
+    // Transform API history to chart format if needed, or use directly if it matches
+    // API returns [{month: "Jan", expense: 100}, ...] usually
+    return history.history.map((h: any) => ({
+      month: h.month,
+      amount: h.expense
+    }));
+  }, [history]);
 
-        // Prepare Category Data for Chart
-        const colors = [
-          "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)", "hsl(199, 89%, 48%)",
-          "hsl(220, 9%, 46%)", "hsl(280, 65%, 60%)", "hsl(234, 89%, 54%)"
-        ];
-        const categoryChartData = Object.entries(catTotals).map(([name, value], idx) => ({
-          name,
-          value,
-          color: colors[idx % colors.length]
-        })).sort((a, b) => b.value - a.value); // sort by biggest
-
-        // Prepare History Data for Chart
-        const monthsOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const historyChartData = monthsOrder.map(m => ({
-          month: m,
-          amount: historyMap[m] || 0
-        })).filter(h => h.amount > 0 || historyMap[h.month] !== undefined || true).slice(-6); // Last 6 months simplified? Need to be smarter about "current month" but this is okay for hackathon. 
-        // Better: sort entries by date if we tracked full dates, but map is easy
-
-        setRealExpenses(totalExp);
-        setCategoryStats(categoryChartData);
-        setExpenseHistory(historyChartData);
-
-        // Fetch Budgets (Proxy for Income for now, or just 'Savings Limit')
-        const budgetsSnap = await getDocs(collection(db, "users", user.uid, "budgets"));
-        let totalBudget = 0;
-        budgetsSnap.forEach(doc => totalBudget += (doc.data().amount || 0));
-
-        // Estimate "Income" as (Total Budget + 20%) or default base if 0
-        const estIncome = totalBudget > 0 ? totalBudget * 1.2 : 50000;
-        setRealIncome(estIncome);
-
-        // Investments (Fetch if available, else 0)
-        // Just use a placeholder since we haven't migrated Investments page save logic
-        setRealInvestment(0);
-
-      } catch (error) {
-        console.error("Error fetching dashboard data:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [user]);
 
   const savingsGoalProgress = useMemo(() => {
     if (!realIncome) return 0;
@@ -224,31 +192,88 @@ export default function Dashboard() {
       </div>
 
       {/* AI Insight Section */}
-      <div className="rounded-2xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-1 border border-primary/10">
-        <div className="bg-card/50 backdrop-blur-sm rounded-xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 border border-white/5">
-          <div className="flex items-start gap-4">
-            <div className="rounded-full bg-primary/10 p-3 ring-1 ring-primary/25">
-              <Sparkles className="h-6 w-6 text-primary" />
+      <div className="rounded-2xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-1 border border-primary/10 transition-all duration-300">
+        <div className="bg-card/50 backdrop-blur-sm rounded-xl border border-white/5 overflow-hidden">
+          <div className="p-6 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="rounded-full bg-primary/10 p-3 ring-1 ring-primary/25">
+                <Sparkles className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                  AI Insight
+                  <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary">
+                    New
+                  </span>
+                </h3>
+                <p className="mt-1 text-muted-foreground max-w-2xl">
+                  You have saved <span className="font-semibold text-foreground">{realIncome > 0 ? Math.round(((realIncome - realExpenses) / realIncome) * 100) : 0}%</span> of your income this month.
+                  {realExpenses > realIncome
+                    ? " You are currently spending more than you earn. Review your recent expenses to get back on track."
+                    : ((realIncome - realExpenses) / realIncome) > 0.2
+                      ? " Excellent! You are meeting the recommended 20% savings rule. Keep it up!"
+                      : " Try to increase your savings to 20% for better financial health."}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                AI Insight
-                <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary">
-                  New
-                </span>
-              </h3>
-              <p className="mt-1 text-muted-foreground max-w-2xl">
-                Your expenses are {realIncome > 0 ? ((realExpenses / realIncome) * 100).toFixed(0) : 0}% of your estimated income.
-                {realExpenses > realIncome ? " Careful, you are spending more than you earn!" : " Great job keeping it under control!"}
-              </p>
-            </div>
+            <button
+              onClick={() => setIsAiExpanded(!isAiExpanded)}
+              className="whitespace-nowrap rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20 flex items-center gap-2"
+            >
+              {isAiExpanded ? "Hide Insights" : "Ask AI Agents"}
+              {isAiExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
           </div>
-          <button
-            onClick={() => navigate("/insights")}
-            className="whitespace-nowrap rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
-          >
-            View Analytics
-          </button>
+
+          {/* Expanded Agent Insights */}
+          {isAiExpanded && (
+            <div className="p-6 pt-0 border-t border-white/5 animate-in slide-in-from-top-2 fade-in duration-300">
+              <div className="grid gap-4 md:grid-cols-3 mt-4">
+                {/* Budget Agent */}
+                <div className="rounded-xl bg-card/80 p-4 border border-border/50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500"><Bot className="h-4 w-4" /></div>
+                    <span className="font-semibold text-sm">Budget Agent</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Your <span className="font-medium text-foreground">Income utilization</span> is {realIncome > 0 ? ((realExpenses / realIncome) * 100).toFixed(0) : 0}%.
+                    {realExpenses < realIncome * 0.5
+                      ? " You are operating well within a safe margin. Consider increasing investments."
+                      : " You are consuming a large portion of your income on expenses."}
+                  </p>
+                </div>
+
+                {/* Savings Agent */}
+                <div className="rounded-xl bg-card/80 p-4 border border-border/50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500"><Target className="h-4 w-4" /></div>
+                    <span className="font-semibold text-sm">Savings Agent</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Based on your salary of ₹{realIncome.toLocaleString()}, your target monthly savings should be <span className="font-medium text-foreground">₹{(realIncome * 0.2).toLocaleString()}</span>.
+                    Currently saving: <span className={realIncome - realExpenses >= realIncome * 0.2 ? "text-emerald-500 font-medium" : "text-amber-500 font-medium"}>₹{(Math.max(0, realIncome - realExpenses)).toLocaleString()}</span>.
+                  </p>
+                </div>
+
+                {/* Forecast Agent */}
+                <div className="rounded-xl bg-card/80 p-4 border border-border/50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-lg bg-purple-500/10 text-purple-500"><ArrowRight className="h-4 w-4" /></div>
+                    <span className="font-semibold text-sm">Forecast Agent</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    At this rate, your projected annual savings will be <span className="font-medium text-foreground">₹{Math.max(0, (realIncome - realExpenses) * 12).toLocaleString()}</span>.
+                    {expenseHistory.length > 0 && expenseHistory[0].amount > realExpenses ? " Your spending is trending down vs last month. Good sign!" : ""}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button onClick={() => navigate("/insights")} className="text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+                  View Full Analysis <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

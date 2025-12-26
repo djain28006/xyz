@@ -24,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { db } from "@/lib/firebase";
-import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc } from "firebase/firestore";
+import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc, getDoc } from "firebase/firestore";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface BudgetCategory {
@@ -35,36 +35,44 @@ interface BudgetCategory {
   icon: string;
 }
 
-
 export default function Budgets() {
   const { user } = useAuth();
   const [budgets, setBudgets] = useState<BudgetCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [income, setIncome] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [newBudget, setNewBudget] = useState({ name: "", budget: "", spent: "0" });
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchBudgets = async () => {
+    const fetchData = async () => {
       if (!user) return;
 
       try {
+        // Fetch Budgets
         const budgetsRef = collection(db, "users", user.uid, "budgets");
-        // const q = query(budgetsRef, orderBy("createdAt", "desc")); 
         const querySnapshot = await getDocs(budgetsRef);
         const fetchedBudgets: BudgetCategory[] = [];
         querySnapshot.forEach((doc) => {
           fetchedBudgets.push({ id: doc.id, ...doc.data() } as BudgetCategory);
         });
         setBudgets(fetchedBudgets);
+
+        // Fetch Income
+        const userDocRef = doc(db, "users", user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          setIncome(userDocSnap.data().monthly_income || 0);
+        }
+
       } catch (error) {
-        console.error("Error fetching budgets:", error);
+        console.error("Error fetching data:", error);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchBudgets();
+    fetchData();
   }, [user]);
 
   const handleAddBudget = async () => {
@@ -193,16 +201,31 @@ export default function Budgets() {
       })()}
 
       {/* AI Hint */}
-      <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">
-        <p className="text-sm text-primary">
-          💡 <strong>AI Tip:</strong> Your budgets are automatically adjusted
-          based on your spending patterns. We recommend increasing your Food
-          budget by ₹2,000.
-        </p>
-      </div>
+      {(() => {
+        const sortedByRisk = [...budgets].sort((a, b) => (b.spent / b.budget) - (a.spent / a.budget));
+        const worstCategory = sortedByRisk[0];
+
+        let message = "Your spending patterns look healthy! You are on track to meet your savings goals.";
+        if (worstCategory) {
+          const pct = (worstCategory.spent / worstCategory.budget) * 100;
+          if (pct > 100) {
+            message = `You have exceeded your ${worstCategory.name} budget by ₹${(worstCategory.spent - worstCategory.budget).toLocaleString()}. Consider adjusting closer to your actual spending.`;
+          } else if (pct > 85) {
+            message = `You are close to reaching your limit in ${worstCategory.name} (${pct.toFixed(0)}%). Try to reduce spend here for the rest of the month.`;
+          }
+        }
+
+        return (
+          <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">
+            <p className="text-sm text-primary">
+              💡 <strong>AI Tip:</strong> {message}
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Summary */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <div className="rounded-xl bg-card p-6 shadow-card border-2 border-border">
           <p className="text-sm text-muted-foreground">Total Budget</p>
           <p className="text-2xl font-bold">
@@ -216,9 +239,15 @@ export default function Budgets() {
           </p>
         </div>
         <div className="rounded-xl bg-card p-6 shadow-card border-2 border-border">
-          <p className="text-sm text-muted-foreground">Overall Status</p>
+          <p className="text-sm text-muted-foreground">Income Utilized</p>
+          <p className="text-2xl font-bold text-primary">
+            {income > 0 ? Math.round((budgets.reduce((sum, b) => sum + b.budget, 0) / income) * 100) : 0}%
+          </p>
+        </div>
+        <div className="rounded-xl bg-card p-6 shadow-card border-2 border-border">
+          <p className="text-sm text-muted-foreground">Over Budget</p>
           <p className="text-2xl font-bold text-warning">
-            {budgets.filter((b) => b.spent > b.budget).length} over budget
+            {budgets.filter((b) => b.spent > b.budget).length} categories
           </p>
         </div>
       </div>

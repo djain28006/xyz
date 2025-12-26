@@ -3,7 +3,7 @@ import { TrendingUp, TrendingDown, Lightbulb, AlertTriangle, CheckCircle, Indian
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 
 type InsightType = "positive" | "negative" | "warning" | "tip";
 
@@ -86,13 +86,22 @@ export default function Insights() {
         // Add subscription cost to total expenses if not already tracked in budgets (assuming separate for now)
         const totalExpenses = totalSpent + totalSubs;
 
-        // Mock Income (since we don't have an input for it yet) - usually higher than expenses hopefully
-        const estimatedIncome = Math.max(totalExpenses * 1.2, 50000);
-        const savings = estimatedIncome - totalExpenses;
-        const savingsRate = Math.round((savings / estimatedIncome) * 100);
+        // Fetch User Income
+        let userIncome = 0;
+        const userDocRef = doc(db, "users", user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          userIncome = userDocSnap.data().monthly_income || 0;
+        }
+
+        // Fallback if 0 (e.g. user skipped onboarding or data error), though unlikely if flow is forced
+        const incomeToUse = userIncome > 0 ? userIncome : Math.max(totalExpenses * 1.2, 50000);
+
+        const savings = incomeToUse - totalExpenses;
+        const savingsRate = incomeToUse > 0 ? Math.round((savings / incomeToUse) * 100) : 0;
 
         setSummary({
-          income: estimatedIncome,
+          income: incomeToUse,
           expenses: totalExpenses,
           savings: savings,
           savingsRate: savingsRate
