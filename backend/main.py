@@ -30,6 +30,22 @@ class QueryRequest(BaseModel):
 # Initialize data loader
 data_loader = DataLoader()
 
+@app.get("/")
+def read_root():
+    """
+    Root endpoint - Health check
+    """
+    return {
+        "message": "FinGenius AI Agent API is running",
+        "status": "healthy",
+        "version": "1.0.0",
+        "endpoints": {
+            "upload": "/upload",
+            "ask": "/ask",
+            "dashboard": "/dashboard/*"
+        }
+    }
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
